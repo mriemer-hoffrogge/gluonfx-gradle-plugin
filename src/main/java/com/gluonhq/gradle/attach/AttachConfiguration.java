@@ -32,7 +32,6 @@
 package com.gluonhq.gradle.attach;
 
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
 
 import javax.inject.Inject;
@@ -61,7 +60,7 @@ public class AttachConfiguration {
     @Inject
     public AttachConfiguration(Project project) {
         this.project = project;
-        this.services = project.container(AttachServiceDefinition.class);
+        this.services = project.getObjects().domainObjectContainer(AttachServiceDefinition.class);
     }
 
     public void version(String version) {
@@ -135,17 +134,14 @@ public class AttachConfiguration {
                 });
 
             // Also add util artifact if any other artifact added
-            Map<String, String> utilDependencyNotationMap = new HashMap<>();
-            utilDependencyNotationMap.put("group", DEPENDENCY_GROUP);
-            utilDependencyNotationMap.put("name", UTIL_ARTIFACT);
-            utilDependencyNotationMap.put("version", getVersion());
+            String utilClassifier = null;
             if (Constants.PROFILE_ANDROID.equals(target) || Constants.PROFILE_IOS.equals(target)
                     || Constants.PROFILE_IOS_SIM.equals(target)) {
-                String utilTarget = Constants.PROFILE_IOS_SIM.equals(target) ?
+                utilClassifier = Constants.PROFILE_IOS_SIM.equals(target) ?
                         Constants.PROFILE_IOS : target;
-                utilDependencyNotationMap.put("classifier", utilTarget);
             }
-            ModuleDependency dep = (ModuleDependency) project.getDependencies().add(configName, utilDependencyNotationMap);
+            String utilDependencyNotation = toDependencyNotation(DEPENDENCY_GROUP, UTIL_ARTIFACT, getVersion(), utilClassifier);
+            ModuleDependency dep = (ModuleDependency) project.getDependencies().add(configName, utilDependencyNotation);
             if (dep != null) {
                 dep.exclude(Map.of("group", "org.openjfx", "module", "*"));
             }
@@ -154,14 +150,22 @@ public class AttachConfiguration {
         lastAppliedConfiguration = configuration;
     }
 
-    private Map<String, String> generateDependencyNotation(AttachServiceDefinition asd, String target) {
-        Map<String, String> dependencyNotationMap = new HashMap<>();
-        dependencyNotationMap.put("group", DEPENDENCY_GROUP);
-        dependencyNotationMap.put("name", asd.getName());
-        dependencyNotationMap.put("version", getVersion());
-        dependencyNotationMap.put("classifier", asd.getSupportedPlatform(target));
+    private String generateDependencyNotation(AttachServiceDefinition asd, String target) {
+        String dependencyNotation = toDependencyNotation(DEPENDENCY_GROUP, asd.getName(), getVersion(), asd.getSupportedPlatform(target));
 
-        project.getLogger().info("Adding dependency for {} in configuration {}: {}", asd.getService().getServiceName(), getConfiguration(), dependencyNotationMap);
-        return dependencyNotationMap;
+        project.getLogger().info("Adding dependency for {} in configuration {}: {}", asd.getService().getServiceName(), getConfiguration(), dependencyNotation);
+        return dependencyNotation;
+    }
+
+    /**
+     * Builds Gradle's single-string dependency notation ("group:name:version[:classifier]").
+     * Map-based ("multi-string") notation is deprecated since Gradle 9 and will fail in Gradle 10.
+     */
+    private static String toDependencyNotation(String group, String name, String version, String classifier) {
+        String notation = group + ":" + name + ":" + version;
+        if (classifier != null) {
+            notation += ":" + classifier;
+        }
+        return notation;
     }
 }
