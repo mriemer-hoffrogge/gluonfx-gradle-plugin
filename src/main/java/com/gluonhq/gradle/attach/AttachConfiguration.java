@@ -43,6 +43,7 @@ import org.gradle.api.artifacts.Configuration;
 
 import com.gluonhq.gradle.ClientExtension;
 import com.gluonhq.substrate.Constants;
+import org.gradle.api.artifacts.ExternalModuleDependency;
 import org.gradle.api.artifacts.ModuleDependency;
 
 public class AttachConfiguration {
@@ -124,14 +125,12 @@ public class AttachConfiguration {
 
         project.getLogger().info("Adding Attach dependencies for target: " + target);
         if (services != null && !services.isEmpty()) {
-            services.stream()
-                .map(asd -> generateDependencyNotation(asd, target))
-                .forEach(depNotion -> {
-                    ModuleDependency dep = (ModuleDependency) project.getDependencies().add(configName, depNotion);
-                    if (dep != null) {
-                        dep.exclude(Map.of("group", "org.openjfx", "module", "*"));
-                    }
-                });
+            services.forEach(asd -> {
+                ModuleDependency dep = generateDependency(asd, target, configName);
+                if (dep != null) {
+                    dep.exclude(Map.of("group", "org.openjfx", "module", "*"));
+                }
+            });
 
             // Also add util artifact if any other artifact added
             String utilClassifier = null;
@@ -140,8 +139,7 @@ public class AttachConfiguration {
                 utilClassifier = Constants.PROFILE_IOS_SIM.equals(target) ?
                         Constants.PROFILE_IOS : target;
             }
-            String utilDependencyNotation = toDependencyNotation(DEPENDENCY_GROUP, UTIL_ARTIFACT, getVersion(), utilClassifier);
-            ModuleDependency dep = (ModuleDependency) project.getDependencies().add(configName, utilDependencyNotation);
+            ModuleDependency dep = createDependency(UTIL_ARTIFACT, utilClassifier, configName);
             if (dep != null) {
                 dep.exclude(Map.of("group", "org.openjfx", "module", "*"));
             }
@@ -150,22 +148,34 @@ public class AttachConfiguration {
         lastAppliedConfiguration = configuration;
     }
 
-    private String generateDependencyNotation(AttachServiceDefinition asd, String target) {
-        String dependencyNotation = toDependencyNotation(DEPENDENCY_GROUP, asd.getName(), getVersion(), asd.getSupportedPlatform(target));
+    private ModuleDependency generateDependency(AttachServiceDefinition asd, String target, String configName) {
+        ModuleDependency dep = createDependency(asd.getName(), asd.getSupportedPlatform(target), configName);
 
-        project.getLogger().info("Adding dependency for {} in configuration {}: {}", asd.getService().getServiceName(), getConfiguration(), dependencyNotation);
-        return dependencyNotation;
+        project.getLogger().info("Adding dependency for {} in configuration {}: {}:{}:{}:{}", asd.getService().getServiceName(), getConfiguration(),
+                DEPENDENCY_GROUP, asd.getName(), getVersion(), asd.getSupportedPlatform(target));
+
+        return dep;
     }
 
     /**
-     * Builds Gradle's single-string dependency notation ("group:name:version[:classifier]").
-     * Map-based ("multi-string") notation is deprecated since Gradle 9 and will fail in Gradle 10.
+     * Creates and adds a dependency on "group:name:version" (Gradle's non-deprecated single-string
+     * notation) and, when a classifier is given, attaches it via the equally non-deprecated
+     * {@link ModuleDependency#artifact(Action)} API rather than embedding it in the coordinate
+     * string — this mirrors exactly what the old Map-based ("classifier" key) notation did
+     * internally, since embedding the classifier in the coordinate string altered dependency
+     * resolution in a way that broke native-image compilation for consumers.
      */
-    private static String toDependencyNotation(String group, String name, String version, String classifier) {
-        String notation = group + ":" + name + ":" + version;
+    private ModuleDependency createDependency(String name, String classifier, String configName) {
+        ExternalModuleDependency dep = (ExternalModuleDependency) project.getDependencies()
+                .create(DEPENDENCY_GROUP + ":" + name + ":" + getVersion());
         if (classifier != null) {
-            notation += ":" + classifier;
+            dep.artifact(artifact -> {
+                artifact.setName(name);
+                artifact.setType("jar");
+                artifact.setExtension("jar");
+                artifact.setClassifier(classifier);
+            });
         }
-        return notation;
+        return (ModuleDependency) project.getDependencies().add(configName, dep);
     }
 }
